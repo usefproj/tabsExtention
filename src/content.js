@@ -2,6 +2,37 @@
 let tabManagerVisible = false;
 let tabManagerEl = null;
 
+// Add this function at the top of content.js
+function logDebug(message, data) {
+  console.log(`Floating Tab Manager: ${message}`, data || "");
+}
+
+// Update the showTabManager function
+function showTabManager() {
+  logDebug("Showing tab manager");
+
+  if (!tabManagerEl) {
+    tabManagerEl = createTabManager();
+    logDebug("Tab manager created");
+  }
+
+  tabManagerEl.classList.remove("hidden");
+  tabManagerVisible = true;
+
+  // Update tabs list
+  updateTabsList();
+
+  // Focus the search input
+  setTimeout(() => {
+    const searchInput = tabManagerEl.querySelector(".tab-search");
+    if (searchInput) {
+      searchInput.focus();
+      logDebug("Search input focused");
+    } else {
+      logDebug("Search input not found", tabManagerEl);
+    }
+  }, 100);
+}
 // Create and initialize the tab manager
 function createTabManager() {
   tabManagerEl = document.createElement("div");
@@ -34,40 +65,50 @@ function createTabManager() {
 }
 
 // Update the tabs list in the UI
+// content.js (replace the updateTabsList function)
 function updateTabsList(searchTerm = "") {
-  const tabsContainer = tabManagerEl.querySelector(".tabs-container");
-  tabsContainer.innerHTML = "";
+  // Request tabs from background script
+  chrome.runtime.sendMessage(
+    { action: "get_tabs", searchTerm: searchTerm },
+    (response) => {
+      if (!response || !response.tabs) {
+        console.error("Failed to get tabs data", response);
+        return;
+      }
 
-  chrome.tabs.query({}, (tabs) => {
-    const filteredTabs = searchTerm
-      ? tabs.filter((tab) =>
-          tab.title.toLowerCase().includes(searchTerm.toLowerCase())
-        )
-      : tabs;
+      const tabsContainer = tabManagerEl.querySelector(".tabs-container");
+      tabsContainer.innerHTML = "";
 
-    filteredTabs.forEach((tab) => {
-      const tabEl = document.createElement("div");
-      tabEl.className = "tab-item";
-      tabEl.innerHTML = `
+      response.tabs.forEach((tab) => {
+        const tabEl = document.createElement("div");
+        tabEl.className = "tab-item";
+        tabEl.innerHTML = `
         <img src="${tab.favIconUrl || "default-icon.png"}" class="tab-favicon">
         <span class="tab-title">${tab.title}</span>
         <button class="tab-close">×</button>
       `;
 
-      tabEl.addEventListener("click", () => {
-        chrome.tabs.update(tab.id, { active: true });
-        hideTabManager();
-      });
+        tabEl.addEventListener("click", () => {
+          chrome.runtime.sendMessage({
+            action: "switch_to_tab",
+            tabId: tab.id,
+          });
+          hideTabManager();
+        });
 
-      tabEl.querySelector(".tab-close").addEventListener("click", (e) => {
-        e.stopPropagation();
-        chrome.tabs.remove(tab.id);
-        tabEl.remove();
-      });
+        tabEl.querySelector(".tab-close").addEventListener("click", (e) => {
+          e.stopPropagation();
+          chrome.runtime.sendMessage({
+            action: "close_tab",
+            tabId: tab.id,
+          });
+          tabEl.remove();
+        });
 
-      tabsContainer.appendChild(tabEl);
-    });
-  });
+        tabsContainer.appendChild(tabEl);
+      });
+    }
+  );
 }
 
 // Make an element draggable
@@ -150,4 +191,36 @@ document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.shiftKey && e.code === "Space") {
     toggleTabManager();
   }
+});
+
+// Auto-enable full screen
+function enableFullScreen() {
+  // Hide Chrome's tab bar via CSS
+  const style = document.createElement("style");
+  style.textContent = `
+    /* Hide tab bar in Chromium browsers */
+    @media screen {
+      body {
+        margin-top: 0 !important;
+      }
+      
+      /* This targets Chrome's tab bar */
+      #main-toolbar, .tab-strip {
+        display: none !important;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+
+  // You might also want to use the Fullscreen API
+  document.documentElement.requestFullscreen().catch((err) => {
+    console.log("Error attempting to enable full-screen mode:", err);
+  });
+}
+
+// Call this function when appropriate, e.g. after user interaction
+// Due to browser security, fullscreen needs user interaction
+document.addEventListener("click", function fullscreenOnClick() {
+  enableFullScreen();
+  document.removeEventListener("click", fullscreenOnClick);
 });
